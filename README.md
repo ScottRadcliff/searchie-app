@@ -5,6 +5,9 @@ Searchie is a small grep-like utility that searches a file or directory and prin
 For hands-on development, use the files in `samples/` and the
 [manual QA guide](docs/manual-qa.md), including copy/paste IEx commands and expected results.
 
+See the [changelog](CHANGELOG.md) and [v0.1 release review](docs/release-readiness.md)
+for compatibility notes and verification results.
+
 ## Standalone command
 
 Build the executable with Docker:

@@ -112,4 +112,19 @@ defmodule SearchieStreamTest do
 
     assert {:error, {:invalid_glob, "{"}} = Searchie.filter(path, "hit", [{"include", "{"}])
   end
+
+  test "glob filters treat search roots containing wildcard characters literally", %{dir: dir} do
+    root = Path.join(dir, "[draft]-{copy}-*?")
+    File.mkdir_p!(Path.join(root, "generated"))
+    File.write!(Path.join(root, "keep.ex"), "hit\n")
+    File.write!(Path.join(root, "other.txt"), "hit\n")
+    File.write!(Path.join(root, "generated/skip.ex"), "hit\n")
+    modifiers = [{"include", "*.ex"}, {"exclude", "generated"}]
+
+    assert {:ok, %{matches: [match], errors: []}} = Searchie.filter(root, "hit", modifiers)
+    assert match.file_path == Path.join(root, "keep.ex")
+
+    assert {:ok, %{matches: [_], errors: []}} =
+             Searchie.filter(Path.join(root, "keep.ex"), "hit", modifiers)
+  end
 end

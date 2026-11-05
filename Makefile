@@ -4,6 +4,9 @@ COMPOSE ?= docker compose
 SERVICE ?= app
 SEARCH_PATH ?= sample.txt
 QUERY ?= Lorem
+# Preserve literal dollar signs instead of interpreting them as Make variables.
+override SEARCH_PATH := $(value SEARCH_PATH)
+override QUERY := $(value QUERY)
 export SEARCH_PATH QUERY
 
 .PHONY: help build up down stop restart logs ps shell console test format check search package

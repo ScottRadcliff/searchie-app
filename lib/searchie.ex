@@ -4,9 +4,19 @@ defmodule Searchie do
   """
 
   @type modifier :: {String.t(), String.t() | boolean()}
-  @type match :: %{file_path: Path.t(), line_number: pos_integer(), line_text: String.t()}
+  @type match :: %{
+          required(:file_path) => Path.t(),
+          required(:line_number) => pos_integer(),
+          required(:line_text) => String.t(),
+          optional(:context) => [{pos_integer(), String.t()}]
+        }
   @type file_error :: %{file_path: Path.t(), reason: term()}
   @type result :: %{matches: [match()], modifiers: [modifier()], errors: [file_error()]}
+  @type scan_result(accumulator) :: %{
+          value: accumulator,
+          count: non_neg_integer(),
+          errors: [file_error()]
+        }
 
   @doc """
   Filters `path` for lines containing `query`.
@@ -51,6 +61,15 @@ defmodule Searchie do
   accumulator; filters and errors also retain path metadata.
   Nested directory symlinks are not followed, preventing cycles.
   """
+  @spec scan(
+          Path.t(),
+          String.t(),
+          [modifier()],
+          accumulator,
+          (match(), accumulator -> accumulator),
+          non_neg_integer()
+        ) :: {:ok, scan_result(accumulator)} | {:error, term()}
+        when accumulator: term()
   def scan(path, query, modifiers, initial, reducer, context \\ 0)
       when is_binary(path) and is_binary(query) and is_integer(context) and context >= 0 do
     with {:ok, regex} <- compile_query(query, modifiers),
@@ -179,7 +198,7 @@ defmodule Searchie do
         if String.valid?(text) do
           number = number + 1
           buffer = :queue.in({number, text}, buffer)
-          buffer = if :queue.len(buffer) > 2 * context + 1, do: :queue.drop(buffer), else: buffer
+          buffer = if number > 2 * context + 1, do: :queue.drop(buffer), else: buffer
 
           pending =
             if Regex.match?(regex, text) do
@@ -235,12 +254,26 @@ defmodule Searchie do
 
       try do
         matches =
-          root |> Path.join(glob) |> Path.wildcard(match_dot: true) |> Enum.map(&Path.expand/1)
+          root
+          |> escape_glob_root()
+          |> Path.join(glob)
+          |> Path.wildcard(match_dot: true)
+          |> Enum.map(&Path.expand/1)
 
         {:cont, {:ok, MapSet.union(paths, MapSet.new(matches))}}
       rescue
         _ in [ErlangError, ArgumentError] -> {:halt, {:error, {:invalid_glob, pattern}}}
       end
+    end)
+  end
+
+  # Only the user-supplied pattern is a glob; the directory prefix is literal.
+  defp escape_glob_root(root) do
+    root
+    |> String.graphemes()
+    |> Enum.map_join(fn
+      char when char in ["[", "*", "?", "{"] -> "[" <> char <> "]"
+      char -> char
     end)
   end
 

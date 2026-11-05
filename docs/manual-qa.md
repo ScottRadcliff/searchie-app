@@ -88,6 +88,8 @@ For a one-off Docker search, prefix these commands with
 
 ```bash
 make search SEARCH_PATH=samples/logs/app.log QUERY=error
+make search SEARCH_PATH='samples/notes/release notes.txt' QUERY='price=$5.00'
+# Literal punctuation: config.json and price=$5.00
 ```
 
 ## Standalone executable and exit codes

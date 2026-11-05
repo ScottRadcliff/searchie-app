@@ -5,6 +5,56 @@ Searchie is a small grep-like utility that searches a file or directory and prin
 For hands-on development, use the files in `samples/` and the
 [manual QA guide](docs/manual-qa.md), including copy/paste IEx commands and expected results.
 
+## Standalone command
+
+Build the executable with Docker:
+
+```bash
+make build
+make package
+```
+
+Or, with Elixir 1.16 and a compatible Erlang runtime installed:
+
+```bash
+mix escript.build
+```
+
+Both commands produce `./searchie`. The escript bundles Elixir and the application;
+only Erlang/OTP is required on the target machine. Use an OTP version compatible
+with the build runtime (the Docker image builds with OTP 26). The executable can
+be copied to a directory on your executable search path and run from any working
+directory; it does not require this repository, Mix, or Docker at runtime.
+
+```bash
+./searchie samples/logs/app.log error -i -n --color
+./searchie --help
+```
+
+For example, install the built executable locally:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+install -m 755 searchie "$HOME/.local/bin/searchie"
+```
+
+Ensure `$HOME/.local/bin` is on your executable search path. Search paths are
+relative to the current working directory, so after installation you can use
+`searchie /absolute/path/to/logs error -i` from anywhere.
+
+The standalone command uses these exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | At least one matching line, or successful `--help` |
+| `1` | No matching lines (including a count of zero) |
+| `2` | Invalid arguments/query, filesystem failure, or invalid UTF-8 text |
+
+Matches and counts go to stdout; diagnostics go to stderr. A directory search
+continues after individual failures, prints its successful matches, and exits `2`
+if any errors occurred. Counts accompanying errors are partial counts. A file
+with invalid UTF-8 stops at the invalid line; earlier matches remain available.
+
 ## Docker development
 
 Install Docker with Docker Compose and Make. Host Elixir is not required.
@@ -16,7 +66,7 @@ make check
 make search SEARCH_PATH=sample.txt QUERY=Lorem
 ```
 
-`make search`, `make test`, `make format`, and `make check` use temporary
+`make search`, `make test`, `make format`, `make check`, and `make package` use temporary
 containers and do not require `make up`. Search arguments use `SEARCH_PATH`
 because `PATH` is reserved for executable lookup. Quote queries containing spaces
 or shell special characters:
@@ -32,7 +82,7 @@ or IEx with Searchie loaded. Use `Ctrl+C` to stop the attached environment.
 Searchie is a CLI, so this container waits for commands and exposes no ports.
 
 `make help` lists all commands, including `build`, `up`, `down`, `stop`,
-`restart`, `logs`, `ps`, `shell`, `console`, `test`, `format`, `check`, and `search`.
+`restart`, `logs`, `ps`, `shell`, `console`, `test`, `format`, `check`, `search`, and `package`.
 `make down` retains named volumes. Source is mounted at `/app`, so edits appear
 immediately and formatting updates host files. Build artifacts and dependencies
 live in named volumes outside `/app`, separate from the host's `_build` and `deps`.
@@ -109,8 +159,8 @@ A trailing slash is accepted on directory exclusions.
 
 Hidden files are searched too. There are no automatic exclusions and `.gitignore`
 is not read; use `--exclude .git`, `--exclude _build`, and other patterns as needed.
-Filters are applied before reading file contents; directory enumeration still
-visits the search tree.
+Excluded directories are skipped during the search traversal. Glob expansion
+still enumerates paths to build the include/exclude sets.
 
 ### Compatibility and option precedence
 
@@ -149,10 +199,53 @@ Searchie.filter("lib", "DEF", [
   {"exclude", "_build"}
 ])
 # {:ok, %{matches: [%{file_path: "lib/searchie.ex", line_number: 1, line_text: "..."}, ...],
-#         modifiers: [...]}}
+#         modifiers: [...], errors: []}}
 ```
 
 Boolean modifiers accept `true` or `false` (the string `"false"` also disables a
 flag). Scalar modifiers use their last value; include and exclude modifiers
 accumulate. File filtering and case sensitivity belong to the core API;
 formatting, context, color, and count rendering belong to the CLI.
+
+`errors` contains `%{file_path: path, reason: reason}` entries for read, traversal,
+and invalid-encoding failures. Check it even when the outer result is `:ok`.
+Root validation errors return `{:error, reason}`, such as `:enoent`,
+`:unsupported_path`, or `{:file_error, path, reason}`. Invalid queries and patterns
+return `:invalid_regex`, `{:invalid_pattern, name}`, or `{:invalid_glob, pattern}`.
+
+For large files, reduce matches incrementally instead of collecting them:
+
+```elixir
+Searchie.scan("samples", "error", [{"ignore-case", true}], 0, fn _match, count ->
+  count + 1
+end)
+# {:ok, %{value: 9, count: 9, errors: []}}
+```
+
+`scan/6` accepts an optional final context size. With positive context, each match
+also has a `context` list of `{line_number, text}` tuples. Matches are delivered
+once their following context is available, or at the end of the file.
+
+`Searchie.CLI.run/1` returns `{:ok, exit_code}` after rendering output, or
+`{:error, message}` for usage/root errors. `Mix.Tasks.Filter.run/1` is a development
+adapter that returns the code or raises `Mix.Error` for usage/root errors. These
+console APIs do not halt IEx; use the standalone executable when shell exit codes
+are needed.
+
+## Streaming and limitations
+
+- The CLI scans each file once, including context output, without collecting all
+  matches. `--count` also streams and does not retain matching lines.
+- File-content memory depends on the longest line and requested context size.
+  Path-filter sets and filesystem errors require additional metadata memory.
+  `filter/3` collects all matching lines; a `scan/6` accumulator can also grow if
+  the caller chooses to retain results.
+- Empty files contain no lines. A final newline terminates its line without
+  creating an extra empty line. Internal blank lines are searchable.
+- Search input is UTF-8 text. Binary or differently encoded files can produce
+  encoding errors; exclude those files when searching mixed directories.
+- Nested directory symlinks are skipped to prevent cycles. File symlinks are
+  searched; broken symlinks are reported. An explicitly supplied directory
+  symlink is accepted as the search root.
+- Context blocks can overlap. `.gitignore` compatibility, JSON output, whole-word
+  matching, and Hex publication remain outside v0.1.

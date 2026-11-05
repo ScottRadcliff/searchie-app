@@ -38,7 +38,7 @@ length(result.matches)
 # 1 matching line, containing three differently cased occurrences.
 
 Searchie.filter("samples", "nothing-matches-this")
-# {:ok, %{matches: [], modifiers: []}}
+# {:ok, %{matches: [], modifiers: [], errors: []}}
 
 Searchie.filter("samples/missing.txt", "error")
 # {:error, :enoent}
@@ -48,7 +48,8 @@ Searchie.filter("samples/logs/app.log", "/(unclosed/")
 ```
 
 For formatted output, call the task module directly. This can be repeated in the
-same console without Mix task re-enabling:
+same console without Mix task re-enabling. Calls return a status code after
+printing output (`0` for matches, `1` for no matches, `2` for partial errors):
 
 ```elixir
 Mix.Tasks.Filter.run(["samples/logs/app.log", "error", "-i", "-n", "--color"])
@@ -88,3 +89,23 @@ For a one-off Docker search, prefix these commands with
 ```bash
 make search SEARCH_PATH=samples/logs/app.log QUERY=error
 ```
+
+## Standalone executable and exit codes
+
+Run `make package` (or `mix escript.build` with host Elixir). The generated
+`./searchie` accepts the same arguments as `mix filter`:
+
+```bash
+./searchie samples/logs/app.log error -i -n
+# Four matching lines; exit 0.
+./searchie samples nothing-matches-this --count
+# 0; exit 1.
+./searchie samples/missing.txt error
+# Diagnostic on stderr; exit 2.
+./searchie samples/logs/app.log '/(unclosed/'
+# Invalid regex diagnostic; exit 2.
+```
+
+Run `echo $?` immediately after a command to inspect its exit code. Copy the
+executable elsewhere and search an absolute path to verify it works outside the
+repository. Erlang/OTP must be installed on the target machine.

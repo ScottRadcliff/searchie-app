@@ -6,7 +6,7 @@ SEARCH_PATH ?= sample.txt
 QUERY ?= Lorem
 export SEARCH_PATH QUERY
 
-.PHONY: help build up down stop restart logs ps shell console test format check search
+.PHONY: help build up down stop restart logs ps shell console test format check search package
 
 help:
 	@echo 'build    Build the development image'
@@ -22,6 +22,7 @@ help:
 	@echo 'format   Format Elixir source in a temporary container'
 	@echo 'check    Check formatting and run tests'
 	@echo 'search   Search files: make search SEARCH_PATH=sample.txt QUERY=Lorem'
+	@echo 'package  Build the standalone ./searchie escript'
 
 build:
 	$(COMPOSE) build $(SERVICE)
@@ -58,6 +59,9 @@ format:
 
 check:
 	$(COMPOSE) run --rm -T $(SERVICE) sh -c 'mix format --check-formatted && mix test'
+
+package:
+	$(COMPOSE) run --rm -T $(SERVICE) mix escript.build
 
 # Pass search arguments as environment values, not interpolated shell code.
 search:

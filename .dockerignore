@@ -1,0 +1,12 @@
+.git
+_build
+deps
+cover
+doc
+tmp
+.env
+.env.*
+erl_crash.dump
+*.ez
+searchie-*.tar
+tags

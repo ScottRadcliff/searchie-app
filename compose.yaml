@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    init: true
+    volumes:
+      - .:/app
+      - build:/opt/searchie/_build
+      - deps:/opt/searchie/deps
+
+volumes:
+  build:
+  deps:

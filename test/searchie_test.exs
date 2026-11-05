@@ -22,7 +22,7 @@ defmodule SearchieTest do
                Searchie.filter("/tmp/does-not-exist-#{System.unique_integer()}", "x")
     end
 
-    test "carries modifiers for future behavior" do
+    test "preserves presentation modifiers in the result" do
       path = write_file!("red\nblue\n")
       modifiers = [{"count", true}, {"context", "2"}]
 
@@ -59,15 +59,144 @@ defmodule SearchieTest do
     end
   end
 
+  test "literal and regex queries support case-insensitive matching without changing text" do
+    path = write_file!("Alpha
+ALPHA
+alpha
+other
+")
+
+    for query <- ["alpha", "/^alpha$/"] do
+      assert {:ok, %{matches: matches}} = Searchie.filter(path, query, [{"ignore-case", true}])
+      assert Enum.map(matches, & &1.line_text) == ["Alpha", "ALPHA", "alpha"]
+      assert Enum.map(matches, & &1.line_number) == [1, 2, 3]
+    end
+
+    assert {:ok, %{matches: matches}} = Searchie.filter(path, "alpha")
+    assert Enum.map(matches, & &1.line_text) == ["alpha"]
+  end
+
+  test "case-insensitive literal matching escapes regex characters and supports Unicode" do
+    path = write_file!("CAFÉ.txt
+caféXtxt
+")
+
+    assert {:ok, %{matches: [match]}} =
+             Searchie.filter(path, "café.txt", [{"ignore-case", true}])
+
+    assert match.line_text == "CAFÉ.txt"
+  end
+
+  test "last boolean modifier wins" do
+    path = write_file!("ALPHA
+alpha
+")
+
+    for disabled <- [false, "false"] do
+      assert {:ok, %{matches: [match]}} =
+               Searchie.filter(path, "alpha", [
+                 {"ignore-case", true},
+                 {"ignore-case", disabled}
+               ])
+
+      assert match.line_text == "alpha"
+    end
+  end
+
+  test "file patterns combine includes as a union and exclusions take priority" do
+    dir = make_dir!()
+
+    for file <- [
+          "a.ex",
+          "b.exs",
+          "c.txt",
+          "nested/d.ex",
+          "nested/skip.ex",
+          "_build/generated.ex",
+          "nested/_build/generated.ex",
+          ".git/config"
+        ] do
+      path = Path.join(dir, file)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "alpha\n")
+    end
+
+    modifiers = [
+      {"include", "*.ex"},
+      {"include", "*.exs"},
+      {"exclude", "_build"},
+      {"exclude", "skip.*"},
+      {"exclude", ".git"}
+    ]
+
+    assert {:ok, %{matches: matches, modifiers: ^modifiers}} =
+             Searchie.filter(dir, "alpha", modifiers)
+
+    assert Enum.map(matches, &Path.relative_to(&1.file_path, dir)) == [
+             "a.ex",
+             "b.exs",
+             "nested/d.ex"
+           ]
+  end
+
+  test "patterns containing slashes are relative to the search root" do
+    dir = make_dir!()
+
+    for file <- ["lib/a.ex", "lib/deep/b.ex", "other/lib/c.ex"] do
+      path = Path.join(dir, file)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "alpha")
+    end
+
+    assert {:ok, %{matches: matches}} = Searchie.filter(dir, "alpha", [{"include", "lib/*.ex"}])
+    assert Enum.map(matches, &Path.relative_to(&1.file_path, dir)) == ["lib/a.ex"]
+
+    assert {:ok, %{matches: matches}} =
+             Searchie.filter(dir, "alpha", [
+               {"include", "lib/**/*.ex"},
+               {"exclude", "lib/deep/"}
+             ])
+
+    assert Enum.map(matches, &Path.relative_to(&1.file_path, dir)) == ["lib/a.ex"]
+  end
+
+  test "hidden files can be searched and excluded explicitly" do
+    dir = make_dir!()
+    File.mkdir_p!(Path.join(dir, ".git"))
+    File.write!(Path.join(dir, ".git/config"), "alpha")
+    File.write!(Path.join(dir, ".hidden"), "alpha")
+    assert {:ok, %{matches: matches}} = Searchie.filter(dir, "alpha", [{"exclude", ".git"}])
+    assert Enum.map(matches, &Path.basename(&1.file_path)) == [".hidden"]
+  end
+
+  test "patterns also apply to individual files and unmatched includes yield no results" do
+    path = write_file!("alpha")
+    assert {:ok, %{matches: []}} = Searchie.filter(path, "alpha", [{"include", "*.ex"}])
+    assert {:ok, %{matches: []}} = Searchie.filter(path, "alpha", [{"exclude", "*.txt"}])
+    assert {:ok, %{matches: [_]}} = Searchie.filter(path, "alpha", [{"include", "*.txt"}])
+  end
+
   defp write_file!(contents) do
-    path = Path.join(System.tmp_dir!(), "searchie-#{System.unique_integer([:positive])}.txt")
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "searchie-#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive])}.txt"
+      )
+
     File.write!(path, contents)
+    on_exit(fn -> File.rm!(path) end)
     path
   end
 
   defp make_dir! do
-    path = Path.join(System.tmp_dir!(), "searchie-dir-#{System.unique_integer([:positive])}")
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "searchie-dir-#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+      )
+
     File.mkdir_p!(path)
+    on_exit(fn -> File.rm_rf!(path) end)
     path
   end
 end

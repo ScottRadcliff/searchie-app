@@ -68,39 +68,88 @@ Use a regex query by wrapping it in `/.../`:
 mix filter path/to/file.txt "/error [0-9]+/"
 ```
 
-Combine modifiers:
+### Search options
+
+| Option | Short form | Behavior |
+| --- | --- | --- |
+| `--ignore-case` | `-i` | Case-insensitive literal or regex matching |
+| `--line-number` | `-n` | Prefix matching lines with line numbers |
+| `--count` | `-c` | Print the total number of matching lines |
+| `--context N` | `-C N` | Show N lines before and after each match |
+| `--color` | | Highlight matches in yellow |
+| `--color-name NAME` | | Highlight in black, red, green, yellow, blue, magenta, cyan, or white |
+| `--include GLOB` | | Include matching files; repeat to select multiple patterns |
+| `--exclude GLOB` | | Exclude matching files or directories; repeat as needed |
+
+Combine flags to search Elixir files, exclude generated files, and show numbered,
+case-insensitive results with highlighting:
 
 ```bash
-mix filter path/to/file.txt "needle" --modifier count --modifier context=2
+mix filter . "error" -i -n --color --include '*.ex' --include '*.exs' --exclude _build --exclude .git
+mix filter sample.txt '/lorem [a-z]+/' -i --context 2 --color-name cyan
+mix filter lib 'def' --count
 ```
 
-Colorize matched text:
+Use the same options in Docker:
 
 ```bash
-mix filter path/to/file.txt "needle" --modifier color
-mix filter path/to/file.txt "needle" --modifier color=red
+docker compose run --rm -T app mix filter lib 'def' -n --include '*.ex'
 ```
 
-Return only the number of matches:
+Quote glob patterns so the shell passes them to Searchie without expanding them.
+Patterns without `/`, such as `*.ex` or `_build`, match at any depth. Patterns
+containing `/` are relative to the search root: `lib/*.ex` matches files directly
+in `lib`, while `lib/**/*.ex` also matches its subdirectories. For an individual
+file, the root is its parent directory. Includes select files, and exclusions
+always take priority. Excluding a directory excludes all its descendant files.
+A trailing slash is accepted on directory exclusions.
+
+Hidden files are searched too. There are no automatic exclusions and `.gitignore`
+is not read; use `--exclude .git`, `--exclude _build`, and other patterns as needed.
+Filters are applied before reading file contents; directory enumeration still
+visits the search tree.
+
+### Compatibility and option precedence
+
+Existing modifier commands remain supported, including the new options:
 
 ```bash
-mix filter path/to/file.txt "needle" --modifier count
-mix filter path/to/directory "needle" --modifier count
+mix filter sample.txt "Lorem" --modifier color=red --modifier context=2
+mix filter lib "DEF" --modifier ignore-case --modifier line-number --modifier 'include=*.ex'
 ```
 
-Show context lines around each match:
+- Scalar options use the last value in command-line order, including mixed flags
+  and modifiers. Include and exclude patterns accumulate instead.
+- Boolean flags support `--no-count`, `--no-color`, `--no-ignore-case`, and
+  `--no-line-number`. Legacy `--modifier count=false` also disables a flag.
+- `--count` takes precedence over context, color, and line-number output. It counts
+  matching **lines**, even when a query occurs several times on one line.
+- Options are validated even when there are no results or count output is selected.
+- Without `--line-number`, single-file searches print matching text and directory
+  searches print `path:text`. With it, they print `line:text` and `path:line:text`.
+- Context output always includes file and line metadata. It shows a separate block
+  per match, marking the matching line with `>`. Only matching lines are highlighted.
+- Case-insensitive search preserves the original text and casing in results.
+- Queries wrapped in `/.../` are regular expressions; other queries are literals.
+- `mix help filter` lists the CLI options.
 
-```bash
-mix filter path/to/file.txt "needle" --modifier context=2
-mix filter path/to/directory "needle" --modifier context=3
+## Elixir API
+
+`Searchie.filter/3` accepts the same string-keyed modifiers and returns file, line,
+and original text metadata. Presentation options are returned for callers to
+render; they do not alter the match list.
+
+```elixir
+Searchie.filter("lib", "DEF", [
+  {"ignore-case", true},
+  {"include", "*.ex"},
+  {"exclude", "_build"}
+])
+# {:ok, %{matches: [%{file_path: "lib/searchie.ex", line_number: 1, line_text: "..."}, ...],
+#         modifiers: [...]}}
 ```
 
-## Notes
-
-- `--modifier` can be provided multiple times.
-- Supported formats are `key=value` and `flag`.
-- Query is treated as regex when wrapped in `/.../`.
-- When searching a directory, output is formatted as `path/to/file:matching line`.
-- `count` prints only the total number of matches.
-- `context=N` shows `N` lines above and below each match.
-- `color` now highlights the matched text. If provided as a flag, it defaults to yellow.
+Boolean modifiers accept `true` or `false` (the string `"false"` also disables a
+flag). Scalar modifiers use their last value; include and exclude modifiers
+accumulate. File filtering and case sensitivity belong to the core API;
+formatting, context, color, and count rendering belong to the CLI.

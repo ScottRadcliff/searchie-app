@@ -166,15 +166,141 @@ defmodule Mix.Tasks.FilterTest do
     end
   end
 
+  test "standard flags combine case-insensitive matching, numbering and color" do
+    path = write_file!("zero\nALPHA alpha\nlast\n")
+    output = run_filter([path, "alpha", "--ignore-case", "--line-number", "--color"])
+    assert output == "2:\e[33mALPHA\e[0m \e[33malpha\e[0m\n"
+  end
+
+  test "regex highlights preserve original casing with case-insensitive matching" do
+    path = write_file!("Alpha 12\n")
+
+    assert run_filter([path, "/alpha [0-9]+/", "-i", "--color-name", "red"]) ==
+             "\e[31mAlpha 12\e[0m\n"
+  end
+
+  test "standard context and short aliases show numbered context with matching text highlighted" do
+    path = write_file!("zero\nALPHA\ntwo\n")
+    output = run_filter([path, "alpha", "-i", "-n", "-C", "1", "--color"])
+    assert output =~ "[1] #{path}:2"
+    assert output =~ "  1: zero"
+    assert output =~ "> 2: \e[33mALPHA\e[0m"
+    assert output =~ "  3: two"
+  end
+
+  test "count takes precedence over context, color and line numbers" do
+    path = write_file!("Alpha alpha\nALPHA\n")
+    assert run_filter([path, "alpha", "-i", "-c", "-n", "--context", "1", "--color"]) == "2\n"
+  end
+
+  test "directory results use path:line:text and support repeated include and exclude flags" do
+    dir = make_dir!()
+    File.mkdir_p!(Path.join(dir, "_build"))
+
+    for file <- ["a.ex", "b.exs", "c.txt", "_build/d.ex"] do
+      File.write!(Path.join(dir, file), "zero\nALPHA\n")
+    end
+
+    assert run_filter([
+             dir,
+             "alpha",
+             "-i",
+             "-n",
+             "--include",
+             "*.ex",
+             "--include",
+             "*.exs",
+             "--exclude",
+             "_build",
+             "--exclude",
+             "a.ex"
+           ]) == "#{dir}/b.exs:2:ALPHA\n"
+  end
+
+  test "standard flags and legacy modifiers respect command-line order" do
+    path = write_file!("ALPHA\nalpha\n")
+
+    assert run_filter([path, "alpha", "--modifier", "ignore-case", "--no-ignore-case"]) ==
+             "alpha\n"
+
+    assert run_filter([path, "alpha", "--no-ignore-case", "--modifier", "ignore-case", "--count"]) ==
+             "2\n"
+
+    assert run_filter([path, "alpha", "--modifier", "count", "--no-count"]) == "alpha\n"
+    assert run_filter([path, "alpha", "--color-name", "red", "--no-color"]) == "alpha\n"
+
+    assert run_filter([path, "alpha", "--modifier", "color=red", "--color"]) ==
+             "\e[33malpha\e[0m\n"
+
+    assert run_filter([path, "alpha", "--line-number", "--no-line-number"]) == "alpha\n"
+  end
+
+  test "last context value wins across standard flags and modifiers" do
+    path = write_file!("zero\nalpha\ntwo\n")
+    assert run_filter([path, "alpha", "--context", "1", "--modifier", "context=0"]) == "alpha\n"
+    assert run_filter([path, "alpha", "--modifier", "context=0", "--context", "1"]) =~ "  1: zero"
+  end
+
+  test "legacy modifiers support the new search options" do
+    path = write_file!("ALPHA\n")
+
+    assert run_filter([
+             path,
+             "alpha",
+             "--modifier",
+             "ignore-case",
+             "--modifier",
+             "line-number",
+             "--modifier",
+             "include=*.txt"
+           ]) == "1:ALPHA\n"
+  end
+
+  test "invalid flags, missing values, extra arguments and invalid context raise useful errors" do
+    path = write_file!("alpha")
+
+    for args <- [["--unknown"], ["--context"], ["--context", "bad"], ["--include"], ["extra"]] do
+      assert_raise Mix.Error, fn -> run_filter([path, "alpha"] ++ args) end
+    end
+
+    assert_raise Mix.Error, "context modifier must be a non-negative integer: -1", fn ->
+      run_filter([path, "alpha", "--count", "--context", "-1"])
+    end
+
+    assert_raise Mix.Error, "Unsupported color modifier: orange", fn ->
+      run_filter([path, "missing", "--color-name", "orange"])
+    end
+
+    assert_raise Mix.Error, "include requires a non-empty glob pattern", fn ->
+      run_filter([path, "alpha", "--include", ""])
+    end
+  end
+
+  defp run_filter(args) do
+    capture_io(fn -> Mix.Tasks.Filter.run(args) end)
+  end
+
   defp write_file!(contents) do
-    path = Path.join(System.tmp_dir!(), "searchie-#{System.unique_integer([:positive])}.txt")
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "searchie-#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive])}.txt"
+      )
+
     File.write!(path, contents)
+    on_exit(fn -> File.rm!(path) end)
     path
   end
 
   defp make_dir! do
-    path = Path.join(System.tmp_dir!(), "searchie-dir-#{System.unique_integer([:positive])}")
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "searchie-dir-#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+      )
+
     File.mkdir_p!(path)
+    on_exit(fn -> File.rm_rf!(path) end)
     path
   end
 end

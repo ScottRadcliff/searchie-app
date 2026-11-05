@@ -4,7 +4,22 @@ defmodule Mix.Tasks.Filter do
 
   Usage:
 
-      mix filter PATH QUERY [--modifier key=value]...
+      mix filter PATH QUERY [OPTIONS] [--modifier key=value]...
+
+  Options:
+
+    * `--ignore-case`, `-i`: case-insensitive literal or regex matching
+    * `--line-number`, `-n`: prefix matching lines with line numbers
+    * `--count`, `-c`: print only the total number of matching lines
+    * `--context N`, `-C N`: show N lines before and after each match
+    * `--color`: highlight matches in yellow
+    * `--color-name NAME`: highlight matches in a named ANSI color
+    * `--include GLOB`: select files (repeatable)
+    * `--exclude GLOB`: exclude files or directories (repeatable)
+
+  Scalar options use their last command-line value, including legacy modifiers.
+  Boolean flags can be disabled with their `--no-` form. Count overrides other
+  output modes; context output already includes line numbers.
   """
 
   use Mix.Task
@@ -49,18 +64,48 @@ defmodule Mix.Tasks.Filter do
   end
 
   defp parse_args(args) do
-    {opts, positional, invalid} = OptionParser.parse(args, strict: [modifier: :keep])
+    {opts, positional, invalid} =
+      OptionParser.parse(args,
+        strict: [
+          modifier: :keep,
+          count: [:boolean, :keep],
+          context: [:integer, :keep],
+          color: [:boolean, :keep],
+          color_name: :keep,
+          ignore_case: [:boolean, :keep],
+          line_number: [:boolean, :keep],
+          include: :keep,
+          exclude: :keep
+        ],
+        aliases: [i: :ignore_case, n: :line_number, c: :count, C: :context]
+      )
 
     cond do
       invalid != [] ->
         {:error, "Invalid options: #{inspect(invalid)}"}
 
-      length(positional) < 2 ->
-        {:error, "Usage: mix filter PATH QUERY [--modifier key=value]..."}
+      length(positional) != 2 ->
+        {:error, "Usage: mix filter PATH QUERY [OPTIONS] [--modifier key=value]..."}
 
       true ->
-        [path, query | _] = positional
-        modifiers = parse_modifiers(Keyword.get_values(opts, :modifier))
+        [path, query] = positional
+
+        modifiers =
+          Enum.flat_map(opts, fn
+            {:modifier, value} ->
+              parse_modifiers([value])
+
+            {:color_name, value} ->
+              [{"color", value}]
+
+            {name, value} when is_integer(value) ->
+              [{Atom.to_string(name), Integer.to_string(value)}]
+
+            {name, value} ->
+              [{name |> Atom.to_string() |> String.replace("_", "-"), value}]
+          end)
+
+        validate_modifiers!(modifiers)
         {:ok, path, query, modifiers}
     end
   end
@@ -86,17 +131,15 @@ defmodule Mix.Tasks.Filter do
   end
 
   defp render_simple_matches(matches, path, query, modifiers) do
-    if File.regular?(path) do
-      Enum.each(matches, fn match ->
-        maybe_colorize_line(match.line_text, query, modifiers)
-        |> Mix.shell().info()
-      end)
-    else
-      Enum.each(matches, fn match ->
-        line = maybe_colorize_line(match.line_text, query, modifiers)
-        Mix.shell().info("#{match.file_path}:#{line}")
-      end)
-    end
+    directory? = File.dir?(path)
+    numbered? = Searchie.enabled?(modifiers, "line-number")
+
+    Enum.each(matches, fn match ->
+      line = maybe_colorize_line(match.line_text, query, modifiers)
+      prefix = if directory?, do: "#{match.file_path}:", else: ""
+      prefix = if numbered?, do: prefix <> "#{match.line_number}:", else: prefix
+      Mix.shell().info(prefix <> line)
+    end)
   end
 
   defp render_matches_with_context(matches, query, modifiers, context) do
@@ -155,38 +198,27 @@ defmodule Mix.Tasks.Filter do
   defp maybe_colorize_line(line, query, modifiers) do
     case color_from_modifiers(modifiers) do
       nil -> line
-      color -> apply_color(line, query, color)
+      color -> apply_color(line, query, color, modifiers)
     end
   end
 
-  defp apply_color(line, query, color) do
-    case parse_regex_query(query) do
-      {:regex, pattern} ->
-        case Regex.compile(pattern) do
-          {:ok, regex} ->
-            Regex.replace(regex, line, fn match ->
-              IO.ANSI.format([color, match, :reset], true) |> IO.iodata_to_binary()
-            end)
+  defp apply_color(line, query, color, modifiers) do
+    {:ok, regex} = Searchie.compile_query(query, modifiers)
 
-          {:error, _reason} ->
-            line
-        end
-
-      :literal ->
-        colored_query = IO.ANSI.format([color, query, :reset], true) |> IO.iodata_to_binary()
-        String.replace(line, query, colored_query)
-    end
+    Regex.replace(regex, line, fn match ->
+      IO.ANSI.format([color, match], true) |> IO.iodata_to_binary()
+    end)
   end
 
   defp color_from_modifiers(modifiers) do
-    case Enum.find(modifiers, fn {name, _value} -> name == "color" end) do
-      nil ->
+    case Searchie.option(modifiers, "color") do
+      value when value in [nil, false, "false"] ->
         nil
 
-      {"color", true} ->
+      true ->
         :yellow
 
-      {"color", value} when is_binary(value) ->
+      value when is_binary(value) and value != "false" ->
         case Map.fetch(@supported_colors, String.downcase(value)) do
           {:ok, color} -> color
           :error -> Mix.raise("Unsupported color modifier: #{value}")
@@ -195,18 +227,18 @@ defmodule Mix.Tasks.Filter do
   end
 
   defp count_enabled?(modifiers) do
-    Enum.any?(modifiers, fn {name, _value} -> name == "count" end)
+    Searchie.enabled?(modifiers, "count")
   end
 
   defp context_size(modifiers) do
-    case modifiers |> Enum.filter(fn {name, _value} -> name == "context" end) |> List.last() do
+    case Searchie.option(modifiers, "context") do
       nil ->
         0
 
-      {"context", true} ->
+      true ->
         Mix.raise("context modifier requires a number, e.g. --modifier context=2")
 
-      {"context", value} ->
+      value ->
         case Integer.parse(value) do
           {number, ""} when number >= 0 ->
             number
@@ -217,13 +249,18 @@ defmodule Mix.Tasks.Filter do
     end
   end
 
-  defp parse_regex_query(query) do
-    if String.length(query) >= 2 and String.starts_with?(query, "/") and
-         String.ends_with?(query, "/") do
-      pattern = String.slice(query, 1, String.length(query) - 2)
-      {:regex, pattern}
-    else
-      :literal
-    end
+  defp validate_modifiers!(modifiers) do
+    context_size(modifiers)
+    color_from_modifiers(modifiers)
+
+    Enum.each(modifiers, fn
+      {name, value} when name in ["include", "exclude"] ->
+        if not is_binary(value) or value == "" do
+          Mix.raise("#{name} requires a non-empty glob pattern")
+        end
+
+      _ ->
+        :ok
+    end)
   end
 end

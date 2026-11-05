@@ -1,5 +1,7 @@
 # Searchie
 
+![Searchie, a cheerful retro terminal mascot with a magnifying glass searching a trail of highlighted text files](docs/assets/searchie.png)
+
 Searchie is a small grep-like utility that searches a file or directory and prints matching lines.
 
 For hands-on development, use the files in `samples/` and the
@@ -7,6 +9,17 @@ For hands-on development, use the files in `samples/` and the
 
 See the [changelog](CHANGELOG.md) and [v0.1 release review](docs/release-readiness.md)
 for compatibility notes and verification results.
+
+## Table of contents
+
+- [Standalone command](#standalone-command)
+- [Docker development](#docker-development)
+- [Searching files outside the project](#searching-files-outside-the-project)
+- [Command line usage](#command-line-usage)
+- [Search options](#search-options)
+- [Compatibility and option precedence](#compatibility-and-option-precedence)
+- [Elixir API](#elixir-api)
+- [Streaming and limitations](#streaming-and-limitations)
 
 ## Standalone command
 

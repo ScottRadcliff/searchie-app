@@ -1,0 +1,5 @@
+INFO worker ready
+error 501 job failed
+INFO retrying job
+ERROR 502 retry failed
+INFO worker stopped

@@ -2,6 +2,9 @@
 
 Searchie is a small grep-like utility that searches a file or directory and prints matching lines.
 
+For hands-on development, use the files in `samples/` and the
+[manual QA guide](docs/manual-qa.md), including copy/paste IEx commands and expected results.
+
 ## Docker development
 
 Install Docker with Docker Compose and Make. Host Elixir is not required.

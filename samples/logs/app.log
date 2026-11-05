@@ -1,0 +1,8 @@
+2026-11-05T09:00:00Z INFO application started
+2026-11-05T09:00:01Z error 101 database connection refused
+2026-11-05T09:00:02Z INFO retry scheduled
+2026-11-05T09:00:03Z ERROR 202 request timed out
+2026-11-05T09:00:04Z INFO request recovered
+2026-11-05T09:00:05Z Error 303 cache unavailable
+2026-11-05T09:00:06Z error 404 first error repeated on this line
+2026-11-05T09:00:07Z INFO application stopped

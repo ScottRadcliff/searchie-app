@@ -1,0 +1,4 @@
+Release checklist
+Literal punctuation: config.json and price=$5.00
+Unicode text: CAFÉ café Café
+TODO: verify the deployment checklist
